@@ -61,6 +61,9 @@ Systém kombinuje Chainlit frontend, lokálne Python nástroje a externé real-t
 
 ### Kroky
 
+
+.\.venv\Scripts\activate; pip install -r requirements.txt; chainlit run apka/main.py -w
+
 1.  **Klonovanie repozitára:**
     ```bash
     git clone <URL_repozitara>
@@ -69,7 +72,9 @@ Systém kombinuje Chainlit frontend, lokálne Python nástroje a externé real-t
 
 2.  **Vytvorenie a aktivácia virtuálneho prostredia (pomocou `uv`):**
     ```bash
-    uv venv
+uv pip install -r requirements.txt; uv run chainlit run apka/main.py -w
+uv pip install -e .; uv run chainlit run apka/main.py -w
+
     source .venv/bin/activate  # Linux/macOS
     # alebo
     .venv\Scripts\activate    # Windows
