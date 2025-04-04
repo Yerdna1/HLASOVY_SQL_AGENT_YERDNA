@@ -1,0 +1,365 @@
+# Database schema description for natural language to SQL conversion
+schema:
+  tables:
+    autori:
+      description: Authors of books in the library
+      columns:
+        - name: id
+          type: integer
+          description: Primary key
+          constraints: primary key
+        - name: meno
+          type: text
+          description: Author's first name
+          constraints: not null
+        - name: priezvisko
+          type: text
+          description: Author's last name
+          constraints: not null
+        - name: datum_narodenia
+          type: date
+          description: Author's date of birth
+          constraints: null
+        - name: krajina
+          type: text
+          description: Author's country of origin
+          constraints: null
+        - name: hlavny_zaner
+          type: text
+          description: Author's main genre
+          constraints: null
+        - name: created_at
+          type: timestamp
+          description: When the author record was created
+          constraints: default current_timestamp
+
+    vydavatelia:
+      description: Book publishers in the library system
+      columns:
+        - name: id
+          type: integer
+          description: Primary key
+          constraints: primary key
+        - name: nazov
+          type: text
+          description: Publisher name
+          constraints: not null
+        - name: mesto
+          type: text
+          description: Publisher's city
+          constraints: not null
+        - name: rok_zalozenia
+          type: text
+          description: Year the publisher was founded
+          constraints: null
+        - name: kontakt
+          type: text
+          description: Contact information for the publisher
+          constraints: null
+        - name: je_aktivny
+          type: boolean
+          description: Whether the publisher is currently active
+          constraints: default 1
+        - name: created_at
+          type: timestamp
+          description: When the publisher record was created
+          constraints: default current_timestamp
+
+    zanre:
+      description: Book genres
+      columns:
+        - name: id
+          type: integer
+          description: Primary key
+          constraints: primary key
+        - name: nazov
+          type: text
+          description: Genre name
+          constraints: not null unique
+        - name: created_at
+          type: timestamp
+          description: When the genre was added to the system
+          constraints: default current_timestamp
+
+    knihy:
+      description: Books available in the library
+      columns:
+        - name: id
+          type: integer
+          description: Primary key
+          constraints: primary key
+        - name: nazov
+          type: text
+          description: Book title
+          constraints: not null
+        - name: id_autora
+          type: integer
+          description: Reference to the book's author
+          constraints: foreign key to autori.id
+        - name: id_vydavatela
+          type: integer
+          description: Reference to the book's publisher
+          constraints: foreign key to vydavatelia.id
+        - name: rok_vydania
+          type: integer
+          description: Year when the book was published
+          constraints: not null
+        - name: isbn
+          type: text
+          description: International Standard Book Number
+          constraints: unique
+        - name: cena
+          type: decimal
+          description: Book price in EUR
+          constraints: not null
+        - name: pocet_stran
+          type: integer
+          description: Number of pages in the book
+          constraints: null
+        - name: created_at
+          type: timestamp
+          description: When the book was added to the system
+          constraints: default current_timestamp
+
+    knihy_zanre:
+      description: Connection table between books and genres (many-to-many)
+      columns:
+        - name: id
+          type: integer
+          description: Primary key
+          constraints: primary key
+        - name: id_knihy
+          type: integer
+          description: Reference to the book
+          constraints: foreign key to knihy.id
+        - name: id_zanru
+          type: integer
+          description: Reference to the genre
+          constraints: foreign key to zanre.id
+          
+    pouzivatelia:
+      description: Library patrons who can borrow books
+      columns:
+        - name: id
+          type: integer
+          description: Primary key
+          constraints: primary key
+        - name: meno
+          type: text
+          description: Patron's first name
+          constraints: not null
+        - name: priezvisko
+          type: text
+          description: Patron's last name
+          constraints: not null
+        - name: email
+          type: text
+          description: Patron's email address
+          constraints: not null unique
+        - name: telefon
+          type: text
+          description: Patron's phone number
+          constraints: null
+        - name: mesto
+          type: text
+          description: Patron's city of residence
+          constraints: null
+        - name: je_aktivny
+          type: boolean
+          description: Whether the patron's account is active
+          constraints: default 1
+        - name: created_at
+          type: timestamp
+          description: When the patron account was created
+          constraints: default current_timestamp
+
+    pobocky:
+      description: Library branches
+      columns:
+        - name: id
+          type: integer
+          description: Primary key
+          constraints: primary key
+        - name: nazov
+          type: text
+          description: Branch name
+          constraints: not null
+        - name: adresa
+          type: text
+          description: Branch address
+          constraints: not null
+        - name: mesto
+          type: text
+          description: City where the branch is located
+          constraints: not null
+        - name: telefon
+          type: text
+          description: Branch phone number
+          constraints: null
+        - name: email
+          type: text
+          description: Branch email
+          constraints: null
+        - name: created_at
+          type: timestamp
+          description: When the branch was added to the system
+          constraints: default current_timestamp
+
+    vypozicky:
+      description: Book loans to patrons
+      columns:
+        - name: id
+          type: integer
+          description: Primary key
+          constraints: primary key
+        - name: id_pouzivatela
+          type: integer
+          description: Reference to the patron borrowing the book
+          constraints: foreign key to pouzivatelia.id
+        - name: id_knihy
+          type: integer
+          description: Reference to the borrowed book
+          constraints: foreign key to knihy.id
+        - name: id_pobocky
+          type: integer
+          description: Reference to the branch where the book was borrowed
+          constraints: foreign key to pobocky.id
+        - name: datum_vypozicky
+          type: timestamp
+          description: When the book was borrowed
+          constraints: not null
+        - name: datum_vratenia
+          type: timestamp
+          description: When the book was returned (null if not returned yet)
+          constraints: null
+        - name: predpokladany_datum_vratenia
+          type: timestamp
+          description: When the book is expected to be returned
+          constraints: not null
+        - name: stav
+          type: text
+          description: Status of the loan
+          constraints: "in ('požičaná', 'vrátená', 'prekročená', 'stratená') default 'požičaná'"
+
+    udalosti:
+      description: Events held at library branches
+      columns:
+        - name: id
+          type: integer
+          description: Primary key
+          constraints: primary key
+        - name: nazov
+          type: text
+          description: Event name
+          constraints: not null
+        - name: popis
+          type: text
+          description: Event description
+          constraints: null
+        - name: datum_zaciatku
+          type: timestamp
+          description: When the event starts
+          constraints: not null
+        - name: datum_konca
+          type: timestamp
+          description: When the event ends
+          constraints: not null
+        - name: id_pobocky
+          type: integer
+          description: Reference to the branch hosting the event
+          constraints: foreign key to pobocky.id
+        - name: created_at
+          type: timestamp
+          description: When the event was added to the system
+          constraints: default current_timestamp
+
+  example_queries:
+    - question: "Ktorí čitatelia majú najviac výpožičiek?"
+      sql: |
+        SELECT 
+            p.meno,
+            p.priezvisko,
+            p.email,
+            COUNT(v.id) as pocet_vypoziciek
+        FROM pouzivatelia p
+        JOIN vypozicky v ON p.id = v.id_pouzivatela
+        WHERE p.je_aktivny = 1
+        GROUP BY p.id, p.meno, p.priezvisko, p.email
+        ORDER BY pocet_vypoziciek DESC
+        LIMIT 5
+      explanation: "Zobrazuje 5 najaktívnejších čitateľov podľa počtu výpožičiek"
+
+    - question: "Ktoré knihy sú momentálne najviac požičiavané?"
+      sql: |
+        SELECT 
+            k.nazov as nazov_knihy,
+            a.meno || ' ' || a.priezvisko as autor,
+            COUNT(v.id) as pocet_vypoziciek
+        FROM knihy k
+        JOIN autori a ON k.id_autora = a.id
+        JOIN vypozicky v ON k.id = v.id_knihy
+        WHERE v.stav = 'požičaná'
+        GROUP BY k.id, k.nazov, a.meno, a.priezvisko
+        ORDER BY pocet_vypoziciek DESC
+        LIMIT 10
+      explanation: "Zobrazuje 10 najčastejšie požičiavaných kníh, ktoré sú momentálne vypožičané"
+
+    - question: "Aká je priemerná doba výpožičky vrátených kníh podľa žánru?"
+      sql: |
+        SELECT 
+            z.nazov as zaner,
+            AVG(julianday(v.datum_vratenia) - julianday(v.datum_vypozicky)) as priemerna_doba_dni
+        FROM vypozicky v
+        JOIN knihy k ON v.id_knihy = k.id
+        JOIN knihy_zanre kz ON k.id = kz.id_knihy
+        JOIN zanre z ON kz.id_zanru = z.id
+        WHERE v.stav = 'vrátená'
+        AND v.datum_vratenia IS NOT NULL
+        GROUP BY z.id, z.nazov
+        ORDER BY priemerna_doba_dni DESC
+      explanation: "Analyzuje priemernú dobu výpožičky v dňoch pre vrátené knihy podľa žánru"
+
+    - question: "Ktoré pobočky majú najvyšší počet meškajúcich výpožičiek?"
+      sql: |
+        SELECT 
+            pb.nazov as pobocka,
+            pb.mesto,
+            COUNT(v.id) as pocet_meskajucich,
+            ROUND(AVG(julianday('now') - julianday(v.predpokladany_datum_vratenia)), 1) as priemerne_meskanie_dni
+        FROM pobocky pb
+        JOIN vypozicky v ON pb.id = v.id_pobocky
+        WHERE v.stav = 'prekročená'
+        GROUP BY pb.id, pb.nazov, pb.mesto
+        ORDER BY pocet_meskajucich DESC
+      explanation: "Zobrazuje pobočky s najväčším počtom meškajúcich výpožičiek a priemerným meškaním v dňoch"
+
+    - question: "Ktorí autori sú najpopulárnejší podľa počtu výpožičiek za posledný mesiac?"
+      sql: |
+        SELECT 
+            a.meno || ' ' || a.priezvisko as autor,
+            COUNT(v.id) as pocet_vypoziciek,
+            COUNT(DISTINCT k.id) as pocet_roznych_knih
+        FROM autori a
+        JOIN knihy k ON a.id = k.id_autora
+        JOIN vypozicky v ON k.id = v.id_knihy
+        WHERE v.datum_vypozicky >= date('now', '-1 month')
+        GROUP BY a.id, a.meno, a.priezvisko
+        ORDER BY pocet_vypoziciek DESC
+        LIMIT 5
+      explanation: "Zobrazuje 5 najpopulárnejších autorov podľa počtu výpožičiek ich kníh za posledný mesiac"
+
+    - question: "Ktoré žánre sú najpopulárnejšie medzi používateľmi z Bratislavy?"
+      sql: |
+        SELECT 
+            z.nazov as zaner,
+            COUNT(v.id) as pocet_vypoziciek
+        FROM zanre z
+        JOIN knihy_zanre kz ON z.id = kz.id_zanru
+        JOIN knihy k ON kz.id_knihy = k.id
+        JOIN vypozicky v ON k.id = v.id_knihy
+        JOIN pouzivatelia p ON v.id_pouzivatela = p.id
+        WHERE p.mesto = 'Bratislava'
+        GROUP BY z.id, z.nazov
+        ORDER BY pocet_vypoziciek DESC
+        LIMIT 5
+      explanation: "Zobrazuje 5 najobľúbenejších žánrov medzi používateľmi z Bratislavy"

@@ -1,0 +1,230 @@
+{
+    "components": {
+        "atoms": {
+            "buttons": {
+                "userButton": {
+                    "menu": {
+                        "settings": "Nastavenia",
+                        "settingsKey": "S",
+                        "APIKeys": "API kľúče",
+                        "logout": "Odhlásiť sa"
+                    }
+                }
+            }
+        },
+        "molecules": {
+            "newChatButton": {
+                "newChat": "Nový chat"
+            },
+            "tasklist": {
+                "TaskList": {
+                    "title": "🗒️ Zoznam úloh",
+                    "loading": "Načítava sa...",
+                    "error": "Vyskytla sa chyba"
+                }
+            },
+            "attachments": {
+                "cancelUpload": "Zrušiť nahrávanie",
+                "removeAttachment": "Odstrániť prílohu"
+            },
+            "newChatDialog": {
+                "createNewChat": "Vytvoriť nový chat?",
+                "clearChat": "Týmto sa vymažú aktuálne správy a začne sa nový chat.",
+                "cancel": "Zrušiť",
+                "confirm": "Potvrdiť"
+            },
+            "settingsModal": {
+                "settings": "Nastavenia",
+                "expandMessages": "Rozbaliť správy",
+                "hideChainOfThought": "Skryť reťazec myšlienok",
+                "darkMode": "Tmavý režim"
+            },
+            "detailsButton": {
+                "using": "Používa sa",
+                "used": "Použité"
+            },
+            "auth": {
+                "authLogin": {
+                    "title": "Prihláste sa pre prístup k aplikácii.",
+                    "form": {
+                        "email": "E-mailová adresa",
+                        "password": "Heslo",
+                        "noAccount": "Nemáte účet?",
+                        "alreadyHaveAccount": "Už máte účet?",
+                        "signup": "Registrovať sa",
+                        "signin": "Prihlásiť sa",
+                        "or": "ALEBO",
+                        "continue": "Pokračovať",
+                        "forgotPassword": "Zabudli ste heslo?",
+                        "passwordMustContain": "Vaše heslo musí obsahovať:",
+                        "emailRequired": "e-mail je povinné pole",
+                        "passwordRequired": "heslo je povinné pole"
+                    },
+                    "error": {
+                        "default": "Prihlásenie nie je možné.",
+                        "signin": "Skúste sa prihlásiť pomocou iného účtu.",
+                        "oauthsignin": "Skúste sa prihlásiť pomocou iného účtu.",
+                        "redirect_uri_mismatch": "URI presmerovania sa nezhoduje s konfiguráciou oauth aplikácie.",
+                        "oauthcallbackerror": "Skúste sa prihlásiť pomocou iného účtu.",
+                        "oauthcreateaccount": "Skúste sa prihlásiť pomocou iného účtu.",
+                        "emailcreateaccount": "Skúste sa prihlásiť pomocou iného účtu.",
+                        "callback": "Skúste sa prihlásiť pomocou iného účtu.",
+                        "oauthaccountnotlinked": "Na potvrdenie vašej identity sa prihláste pomocou rovnakého účtu, ktorý ste použili pôvodne.",
+                        "emailsignin": "E-mail sa nepodarilo odoslať.",
+                        "emailverify": "Potvrďte svoj e-mail, bol odoslaný nový e-mail.",
+                        "credentialssignin": "Prihlásenie zlyhalo. Skontrolujte, či ste zadali správne údaje.",
+                        "sessionrequired": "Pre prístup k tejto stránke sa prihláste."
+                    }
+                },
+                "authVerifyEmail": {
+                    "almostThere": "Už ste takmer tam! Poslali sme e-mail na ",
+                    "verifyEmailLink": "Pre dokončenie registrácie kliknite na odkaz v tomto e-maile.",
+                    "didNotReceive": "Nemôžete nájsť e-mail?",
+                    "resendEmail": "Znovu odoslať e-mail",
+                    "goBack": "Späť",
+                    "emailSent": "E-mail bol úspešne odoslaný.",
+                    "verifyEmail": "Overte svoju e-mailovú adresu"
+                },
+                "providerButton": {
+                    "continue": "Pokračovať s {{provider}}",
+                    "signup": "Registrovať sa s {{provider}}"
+                },
+                "authResetPassword": {
+                    "newPasswordRequired": "Nové heslo je povinné pole",
+                    "passwordsMustMatch": "Heslá sa musia zhodovať",
+                    "confirmPasswordRequired": "Potvrdenie hesla je povinné pole",
+                    "newPassword": "Nové heslo",
+                    "confirmPassword": "Potvrdiť heslo",
+                    "resetPassword": "Obnoviť heslo"
+                },
+                "authForgotPassword": {
+                    "email": "E-mailová adresa",
+                    "emailRequired": "e-mail je povinné pole",
+                    "emailSent": "Skontrolujte e-mailovú adresu {{email}} pre pokyny na obnovenie hesla.",
+                    "enterEmail": "Zadajte svoju e-mailovú adresu a pošleme vám pokyny na obnovenie hesla.",
+                    "resendEmail": "Znovu odoslať e-mail",
+                    "continue": "Pokračovať",
+                    "goBack": "Späť"
+                }
+            }
+        },
+        "organisms": {
+            "chat": {
+                "history": {
+                    "index": {
+                        "showHistory": "Zobraziť históriu",
+                        "lastInputs": "Posledné vstupy",
+                        "noInputs": "Tak prázdne...",
+                        "loading": "Načítava sa..."
+                    }
+                },
+                "inputBox": {
+                    "input": {
+                        "placeholder": "Sem napíšte svoju správu..."
+                    },
+                    "speechButton": {
+                        "start": "Začať nahrávanie",
+                        "stop": "Zastaviť nahrávanie",
+                        "loading": "Pripája sa"
+                    },
+                    "SubmitButton": {
+                        "sendMessage": "Odoslať správu",
+                        "stopTask": "Zastaviť úlohu"
+                    },
+                    "UploadButton": {
+                        "attachFiles": "Pripojiť súbory"
+                    },
+                    "waterMark": {
+                        "text": "Vytvorené pomocou"
+                    }
+                },
+                "Messages": {
+                    "index": {
+                        "running": "Prebieha",
+                        "executedSuccessfully": "úspešne vykonané",
+                        "failed": "zlyhalo",
+                        "feedbackUpdated": "Spätná väzba aktualizovaná",
+                        "updating": "Aktualizuje sa"
+                    }
+                },
+                "dropScreen": {
+                    "dropYourFilesHere": "Presuňte sem vaše súbory"
+                },
+                "index": {
+                    "failedToUpload": "Nepodarilo sa nahrať",
+                    "cancelledUploadOf": "Zrušené nahrávanie",
+                    "couldNotReachServer": "Nepodarilo sa kontaktovať server",
+                    "continuingChat": "Pokračovanie v predchádzajúcom chate"
+                },
+                "settings": {
+                    "settingsPanel": "Panel nastavení",
+                    "reset": "Resetovať",
+                    "cancel": "Zrušiť",
+                    "confirm": "Potvrdiť"
+                }
+            },
+            "threadHistory": {
+                "sidebar": {
+                    "filters": {
+                        "FeedbackSelect": {
+                            "feedbackAll": "Spätná väzba: Všetko",
+                            "feedbackPositive": "Spätná väzba: Pozitívna",
+                            "feedbackNegative": "Spätná väzba: Negatívna"
+                        },
+                        "SearchBar": {
+                            "search": "Hľadať"
+                        }
+                    },
+                    "DeleteThreadButton": {
+                        "confirmMessage": "Týmto sa odstráni vlákno, ako aj jeho správy a prvky.",
+                        "cancel": "Zrušiť",
+                        "confirm": "Potvrdiť",
+                        "deletingChat": "Odstraňuje sa chat",
+                        "chatDeleted": "Chat odstránený"
+                    },
+                    "index": {
+                        "pastChats": "Predchádzajúce chaty"
+                    },
+                    "ThreadList": {
+                        "empty": "Prázdne...",
+                        "today": "Dnes",
+                        "yesterday": "Včera",
+                        "previous7days": "Predchádzajúcich 7 dní",
+                        "previous30days": "Predchádzajúcich 30 dní"
+                    },
+                    "TriggerButton": {
+                        "closeSidebar": "Zavrieť bočný panel",
+                        "openSidebar": "Otvoriť bočný panel"
+                    }
+                },
+                "Thread": {
+                    "backToChat": "Späť na chat",
+                    "chatCreatedOn": "Tento chat bol vytvorený"
+                }
+            },
+            "header": {
+                "chat": "Chat",
+                "readme": "Readme"
+            }
+        }
+    },
+    "hooks": {
+        "useLLMProviders": {
+            "failedToFetchProviders": "Nepodarilo sa načítať poskytovateľov:"
+        }
+    },
+    "pages": {
+        "Design": {},
+        "Env": {
+            "savedSuccessfully": "Úspešne uložené",
+            "requiredApiKeys": "Požadované API kľúče",
+            "requiredApiKeysInfo": "Na používanie tejto aplikácie sú potrebné nasledujúce API kľúče. Kľúče sú uložené v lokálnom úložisku vášho zariadenia."
+        },
+        "Page": {
+            "notPartOfProject": "Nie ste súčasťou tohto projektu."
+        },
+        "ResumeButton": {
+            "resumeChat": "Pokračovať v chate"
+        }
+    }
+}
