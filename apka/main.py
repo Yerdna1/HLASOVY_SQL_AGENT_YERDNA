@@ -5,13 +5,18 @@ Odvodené z https://github.com/Chainlit/cookbook/tree/main/realtime-assistant
 
 import traceback
 import chainlit as cl
+from chainlit.input_widget import Select, TextInput # Import pre settings
 from chainlit.logger import logger
 import requests
 import datetime
 import calendar
 import time
-import os # Pre budúce použitie s environmentálnymi premennými
-import json # Pre čítanie log súboru
+import os
+import json
+from dotenv import load_dotenv # Na explicitné načítanie .env
+
+# Načítanie environmentálnych premenných
+load_dotenv()
 
 # Import pomocných funkcií
 from apka.rec import KlientRealnehoCasu
@@ -19,25 +24,30 @@ from apka.helpers.realtime_setup import nastav_realtime_klienta
 # Import nástrojov - predpokladáme, že tento import zostáva alebo bude upravený
 from apka.custom_nastroje import nastroje
 
+# --- Helper funkcia na maskovanie kľúčov ---
+def mask_api_key(api_key: str | None) -> str:
+    """Maskuje API kľúč, zobrazí prvé 4 a posledné 4 znaky."""
+    if not api_key or len(api_key) < 9:
+        return "Nenastavený alebo príliš krátky"
+    return f"{api_key[:4]}...{api_key[-4:]}"
 
 # --- OpenAI Cost Fetching ---
-# TODO: PRESUŇTE TENTO KĽÚČ DO ENVIRONMENTÁLNEJ PREMENNEJ! NECOMMITUJTE HARDKÓDOVANÉ KĽÚČE.
-# Získanie kľúča z environmentálnej premennej alebo použitie dočasného
-OPENAI_ADMIN_API_KEY = os.getenv("OPENAI_ADMIN_API_KEY")
+# TODO: Presunúť OPENAI_ADMIN_API_KEY do .env, ak tam ešte nie je
+OPENAI_ADMIN_API_KEY_VALUE = os.getenv("OPENAI_ADMIN_API_KEY") # Premenovaná pre jasnosť
 
-def get_openai_monthly_cost(api_key):
+def get_openai_monthly_cost(): # Odstránený argument api_key
     """Získa náklady na OpenAI API od začiatku aktuálneho mesiaca."""
-    # Použijeme priamo globálnu premennú, keďže je definovaná vyššie
-    if not OPENAI_ADMIN_API_KEY or OPENAI_ADMIN_API_KEY == "YOUR_OPENAI_ADMIN_API_KEY_HERE": # Pridaná kontrola pre placeholder
-        logger.warning("OpenAI Admin API kľúč nebol nájdený alebo je placeholder. Náklady nebudú zobrazené.")
-        return "Chyba: OpenAI Admin API kľúč nie je nakonfigurovaný."
+    # Použijeme hodnotu načítanú z .env
+    if not OPENAI_ADMIN_API_KEY_VALUE or OPENAI_ADMIN_API_KEY_VALUE == "YOUR_OPENAI_ADMIN_API_KEY_HERE": # Pridaná kontrola pre placeholder
+        logger.warning("OPENAI_ADMIN_API_KEY nebol nájdený v .env alebo je placeholder. Náklady nebudú zobrazené.")
+        return "Chyba: OpenAI Admin API kľúč nie je nakonfigurovaný v .env."
 
     now = datetime.datetime.now(datetime.timezone.utc)
     start_of_month_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     start_time_unix = int(start_of_month_dt.timestamp())
 
     headers = {
-        "Authorization": f"Bearer {OPENAI_ADMIN_API_KEY}",
+        "Authorization": f"Bearer {OPENAI_ADMIN_API_KEY_VALUE}",
         "Content-Type": "application/json",
     }
     params = {
@@ -116,19 +126,58 @@ def get_openai_monthly_cost(api_key):
 # --- Koniec OpenAI Cost Fetching ---
 
 
+# --- Koniec OpenAI Cost Fetching ---
+
+
 @cl.on_chat_start
 async def start():
-    """Inicializuje chat, zobrazí náklady a nastaví real-time klienta."""
+    """Inicializuje chat, nastaví klienta a zobrazí nastavenia."""
+
+    # Načítanie hodnôt z .env pre zobrazenie v nastaveniach
+    db_path = os.getenv("DB_DATABASE", "Nenájdené v .env")
+    openai_admin_key = os.getenv("OPENAI_ADMIN_API_KEY")
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
+    together_key = os.getenv("TOGETHER_API_KEY")
+    tavily_key = os.getenv("TAVILY_API_KEY")
+    groq_key = os.getenv("GROQ_API_KEY")
+    # Predvolený LLM provider (môže byť prepísaný nastaveniami)
+    default_llm_provider = os.getenv("AGENT_MODE", "Groq").upper() # Predvolená hodnota Groq, ak AGENT_MODE nie je nastavený
+
+    # Definovanie Chat Settings
+    settings = await cl.ChatSettings(
+        [
+            Select(
+                id="LLMProvider",
+                label="Poskytovateľ LLM",
+                values=["Gemini", "OpenAI", "Groq"], # Pridajte ďalšie podľa potreby
+                initial_index=["Gemini", "OpenAI", "Groq"].index(default_llm_provider) if default_llm_provider in ["Gemini", "OpenAI", "Groq"] else 2 # Index pre Groq ako fallback
+            ),
+            TextInput(id="DBPath", label="Cesta k databáze", initial=db_path, disabled=True),
+            TextInput(id="OpenAIAdminKey", label="OpenAI Admin Key", initial=mask_api_key(openai_admin_key), disabled=True),
+            TextInput(id="GeminiKey", label="Gemini Key", initial=mask_api_key(gemini_key), disabled=True),
+            TextInput(id="OpenAIKey", label="OpenAI Key", initial=mask_api_key(openai_key), disabled=True),
+            TextInput(id="TogetherKey", label="Together Key", initial=mask_api_key(together_key), disabled=True),
+            TextInput(id="TavilyKey", label="Tavily Key", initial=mask_api_key(tavily_key), disabled=True),
+            TextInput(id="GroqKey", label="Groq Key", initial=mask_api_key(groq_key), disabled=True),
+        ]
+    ).send()
+
+    # Uloženie počiatočného výberu LLM do session
+    selected_llm = settings.get("LLMProvider")
+    cl.user_session.set("selected_llm_provider", selected_llm)
+    logger.info(f"Počiatočný LLM poskytovateľ nastavený na: {selected_llm}")
+
     # Zobrazenie úvodnej správy
     await cl.Message(content="Ahoj! Som tu. Stlač `P` pre rozprávanie!").send()
 
-    # Získanie a zobrazenie nákladov OpenAI
-    # Použijeme priamo globálnu premennú OPENAI_ADMIN_API_KEY
-    cost_message_content = get_openai_monthly_cost(OPENAI_ADMIN_API_KEY)
-    await cl.Message(content=cost_message_content, author="Systémové Info").send() # Odoslanie nákladov ako samostatnej správy
+    # Získanie a zobrazenie nákladov OpenAI (ak je kľúč platný)
+    cost_message_content = get_openai_monthly_cost() # Už nepotrebuje argument
+    await cl.Message(content=cost_message_content, author="Systémové Info").send()
 
     # Nastavenie klienta pomocou importovanej funkcie a nástrojov
-    await nastav_realtime_klienta(nastroje)
+    # TODO: Upraviť nastav_realtime_klienta, aby akceptovala a použila selected_llm
+    await nastav_realtime_klienta(nastroje) # Zatiaľ voláme bez LLM providera
 
     # Pridanie tlačidla pre históriu
     actions = [
@@ -138,6 +187,20 @@ async def start():
 
 
 LOG_FILE_PATH = os.path.join("apka", "output", "conversation_log.jsonl")
+
+@cl.on_settings_update
+async def on_settings_update(settings):
+    """Spracuje aktualizáciu nastavení."""
+    selected_llm = settings.get("LLMProvider")
+    if selected_llm:
+        cl.user_session.set("selected_llm_provider", selected_llm)
+        logger.info(f"LLM poskytovateľ aktualizovaný na: {selected_llm}")
+        await cl.Message(content=f"Poskytovateľ LLM bol zmenený na **{selected_llm}**. Zmena sa prejaví pri ďalšej interakcii.").send()
+        # TODO: Potenciálne reinicializovať klienta alebo len zmeniť model pri ďalšom volaní
+        # klient: KlientRealnehoCasu = cl.user_session.get("klient_realneho_casu")
+        # if klient:
+        #     await klient.aktualizuj_konfiguraciu_llm(selected_llm) # Hypotetická funkcia
+
 
 @cl.action_callback("show_history")
 async def on_show_history(action: cl.Action):
