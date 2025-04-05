@@ -7,3 +7,4 @@ plotly>=5.24.1
 websockets==12.0
 together>=1.0
 tavily-python>=0.3
+requests>=2.31.0

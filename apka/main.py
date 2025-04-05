@@ -6,6 +6,11 @@ Odvodené z https://github.com/Chainlit/cookbook/tree/main/realtime-assistant
 import traceback
 import chainlit as cl
 from chainlit.logger import logger
+import requests
+import datetime
+import calendar
+import time
+import os # Pre budúce použitie s environmentálnymi premennými
 
 # Import pomocných funkcií
 from apka.rec import KlientRealnehoCasu
@@ -13,11 +18,113 @@ from apka.helpers.realtime_setup import nastav_realtime_klienta
 # Import nástrojov - predpokladáme, že tento import zostáva alebo bude upravený
 from apka.custom_nastroje import nastroje
 
+# --- OpenAI Cost Fetching ---
+# TODO: PRESUŇTE TENTO KĽÚČ DO ENVIRONMENTÁLNEJ PREMENNEJ! NECOMMITUJTE HARDKÓDOVANÉ KĽÚČE.
+# Získanie kľúča z environmentálnej premennej alebo použitie dočasného
+OPENAI_ADMIN_API_KEY = os.getenv("OPENAI_ADMIN_API_KEY")
+
+def get_openai_monthly_cost(api_key):
+    """Získa náklady na OpenAI API od začiatku aktuálneho mesiaca."""
+    # Použijeme priamo globálnu premennú, keďže je definovaná vyššie
+    if not OPENAI_ADMIN_API_KEY or OPENAI_ADMIN_API_KEY == "YOUR_OPENAI_ADMIN_API_KEY_HERE": # Pridaná kontrola pre placeholder
+        logger.warning("OpenAI Admin API kľúč nebol nájdený alebo je placeholder. Náklady nebudú zobrazené.")
+        return "Chyba: OpenAI Admin API kľúč nie je nakonfigurovaný."
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    start_of_month_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    start_time_unix = int(start_of_month_dt.timestamp())
+
+    headers = {
+        "Authorization": f"Bearer {OPENAI_ADMIN_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    params = {
+        "start_time": start_time_unix,
+    }
+    url = "https://api.openai.com/v1/organization/costs"
+    response = None
+
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=10) # Pridaný timeout
+        response.raise_for_status()
+        data = response.json()
+
+        total_cost = 0.0
+        currency = "USD"
+
+        if data.get("data"):
+            for bucket in data["data"]:
+                if bucket.get("results"):
+                    for result in bucket["results"]:
+                        if result.get("amount"):
+                            total_cost += result["amount"].get("value", 0.0)
+                            currency = result["amount"].get("currency", currency).upper()
+
+            # Vráti formátovaný reťazec s nákladmi
+            return f"Náklady na OpenAI tento mesiac: ${total_cost:.2f} {currency}"
+        else:
+            if data.get("error"):
+                 error_msg = data["error"].get("message", "Neznáma chyba API.")
+                 logger.error(f"Chyba API pri získavaní nákladov OpenAI: {error_msg}")
+                 if "Incorrect API key" in error_msg or "authentication" in error_msg.lower() or "insufficient permissions" in error_msg.lower():
+                     # Vráti chybovú správu špecifickú pre API kľúč
+                     return "Chyba: Neplatný alebo neautorizovaný OpenAI Admin API kľúč."
+                 # Vráti všeobecnú chybovú správu API
+                 return f"Chyba API pri získavaní nákladov: {error_msg}"
+            # Vráti správu, ak neboli nájdené žiadne dáta
+            return "Nepodarilo sa získať údaje o nákladoch (žiadne dáta)."
+
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP chyba pri volaní OpenAI Costs API: {http_err}")
+        if response is not None:
+            status_code = response.status_code
+            try:
+                error_details = response.json().get("error", {})
+                error_message = error_details.get("message", str(http_err))
+                error_type = error_details.get("type")
+                logger.error(f"Stavový kód: {status_code}, Typ chyby: {error_type}, Správa: {error_message}")
+                if status_code == 401 or status_code == 403:
+                    # Vráti chybovú správu špecifickú pre API kľúč
+                    return "Chyba: Neplatný alebo neautorizovaný OpenAI Admin API kľúč."
+                elif status_code == 429:
+                    return "Chyba: Prekročený limit požiadaviek na OpenAI API."
+                else:
+                    # Vráti všeobecnú chybovú správu API
+                    return f"Chyba API ({status_code}): {error_message}"
+            except Exception as json_err:
+                 logger.error(f"Nepodarilo sa parsovať JSON z chybovej odpovede: {json_err}")
+                 # Vráti všeobecnú HTTP chybovú správu
+                 return f"HTTP chyba pri získavaní nákladov: {http_err}"
+        else:
+             # Vráti všeobecnú HTTP chybovú správu, ak odpoveď neexistuje
+            return f"HTTP chyba pri získavaní nákladov: {http_err}"
+    except requests.exceptions.Timeout:
+        logger.error("Timeout pri volaní OpenAI Costs API.")
+        # Vráti správu o timeoute
+        return "Chyba: Vypršal časový limit pri získavaní nákladov."
+    except requests.exceptions.RequestException as req_err:
+        logger.error(f"Chyba pripojenia pri volaní OpenAI Costs API: {req_err}")
+        # Vráti správu o chybe pripojenia
+        return f"Chyba pripojenia pri získavaní nákladov: {req_err}"
+    except Exception as e:
+        logger.error(f"Neočekávaná chyba pri získavaní OpenAI nákladov: {traceback.format_exc()}")
+        # Vráti všeobecnú neočakávanú chybovú správu
+        return f"Neočekávaná chyba: {e}"
+
+# --- Koniec OpenAI Cost Fetching ---
+
 
 @cl.on_chat_start
 async def start():
-    """Inicializuje chat a nastaví real-time klienta."""
+    """Inicializuje chat, zobrazí náklady a nastaví real-time klienta."""
+    # Zobrazenie úvodnej správy
     await cl.Message(content="Ahoj! Som tu. Stlač `P` pre rozprávanie!").send()
+
+    # Získanie a zobrazenie nákladov OpenAI
+    # Použijeme priamo globálnu premennú OPENAI_ADMIN_API_KEY
+    cost_message_content = get_openai_monthly_cost(OPENAI_ADMIN_API_KEY)
+    await cl.Message(content=cost_message_content, author="Systémové Info").send() # Odoslanie nákladov ako samostatnej správy
+
     # Nastavenie klienta pomocou importovanej funkcie a nástrojov
     await nastav_realtime_klienta(nastroje)
 
