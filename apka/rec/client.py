@@ -2,9 +2,10 @@
 
 import asyncio
 import json
+import os # Pridané pre prácu s cestami
 from datetime import datetime
 import numpy as np
-import base64 # Add missing import
+import base64
 
 # Import preložených častí
 from .event_handler import SpracovatelUdalostiRealnehoCasu
@@ -13,10 +14,16 @@ from .conversation import KonverzaciaRealnehoCasu
 from .utils import ziskaj_instrukcie_realneho_casu, buffer_pola_na_base64, PREDVOLENA_FREKVENCIA
 from apka.widgets.spolocne import zapisovac
 
+# Definovanie cesty k log súboru
+LOG_FILE_PATH = os.path.join("apka", "output", "conversation_log.jsonl")
+# Zabezpečenie existencie adresára (aj keď sme ho vytvorili externe)
+os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
+
 
 class KlientRealnehoCasu(SpracovatelUdalostiRealnehoCasu):
     def __init__(self, url=None, api_kluc=None):
         super().__init__()
+        self.log_file_path = LOG_FILE_PATH # Uloženie cesty pre inštanciu
         # Predvolená konfigurácia relácie
         self.predvolena_konfiguracia_relacie = {
             "modalities": ["text", "audio"],
@@ -79,8 +86,22 @@ class KlientRealnehoCasu(SpracovatelUdalostiRealnehoCasu):
         # Špeciálne spracovanie pre dokončenie položky
         self.realtime_api.on("server.response.output_item.done", self._pri_dokonceni_vystupnej_polozky)
 
+    def _log_event(self, event_type: str, data: dict):
+        """Zapíše štruktúrovanú udalosť do log súboru."""
+        log_entry = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "event_type": event_type,
+            "data": data,
+        }
+        try:
+            with open(self.log_file_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+        except Exception as e:
+            zapisovac.error(f"Chyba pri zápise do log súboru {self.log_file_path}: {e}")
+
+
     def _zaznamenaj_udalost(self, udalost):
-        """Zaznamená udalosť klienta alebo servera."""
+        """Zaznamená RAW udalosť klienta alebo servera (môže byť príliš verbose)."""
         udalost_realneho_casu = {
             "time": datetime.utcnow().isoformat(),
             "source": "client" if udalost["type"].startswith("client.") else "server",
@@ -123,9 +144,15 @@ class KlientRealnehoCasu(SpracovatelUdalostiRealnehoCasu):
         polozka, delta = self._spracuj_udalost_konverzacie(udalost)
         if polozka and polozka.get("status") == "completed":
             self.odosli("conversation.item.completed", {"item": polozka})
+            # Logovanie dokončenej správy asistenta
+            if polozka.get("type") == "message" and polozka.get("role") == "assistant":
+                 self._log_event("assistant_message_completed", {"message_id": polozka.get("id"), "content": polozka.get("content")})
+
         # Ak je dokončená položka volanie nástroja, zavoláme ho
         if polozka and polozka.get("formatted", {}).get("tool"):
+            # Logovanie začiatku volania nástroja bude v _zavolaj_nastroj
             await self._zavolaj_nastroj(polozka["formatted"]["tool"])
+        # TODO: Pridať logovanie pre iné typy dokončených položiek ak je potrebné
 
     async def _zavolaj_nastroj(self, nastroj_data):
         """Zavolá zaregistrovaný nástroj s danými argumentmi."""
@@ -133,13 +160,64 @@ class KlientRealnehoCasu(SpracovatelUdalostiRealnehoCasu):
         argumenty_str = nastroj_data.get("arguments", "{}")
         id_volania = nastroj_data.get("call_id")
 
+        # Logovanie začiatku volania nástroja
+        self._log_event("tool_call_started", {
+            "call_id": id_volania,
+            "tool_name": nazov_nastroja,
+            "arguments": argumenty_str # Logujeme string, aby sme sa vyhli chybám pri parsovaní tu
+        })
+
         try:
-            json_argumenty = json.loads(argumenty_str)
+            # Pokus o parsovanie JSON argumentov
+            try:
+                json_argumenty = json.loads(argumenty_str)
+            except json.JSONDecodeError as json_err:
+                # Špecifické logovanie a chyba pre neplatný JSON
+                error_message = f"Neplatný JSON v argumentoch nástroja: {json_err}. Prijaté: {argumenty_str}"
+                zapisovac.error(error_message)
+                self._log_event("tool_call_ended", {
+                    "call_id": id_volania,
+                    "tool_name": nazov_nastroja,
+                    "error": error_message,
+                    "raw_arguments": argumenty_str # Pridáme surové argumenty pre debugovanie
+                })
+                # Odoslanie chyby späť ako výstup funkcie
+                await self.realtime_api.posli(
+                    "conversation.item.create",
+                    {
+                        "item": {
+                            "type": "function_call_output",
+                            "call_id": id_volania,
+                            "output": json.dumps({"error": "Invalid JSON arguments received from model."}),
+                        }
+                    },
+                )
+                # Nevyžadujeme novú odpoveď, LLM by mal opraviť volanie nástroja
+                return # Ukončíme spracovanie tohto volania
+
+            # Pokračujeme, ak bol JSON platný
             konfiguracia_nastroja = self.nastroje.get(nazov_nastroja)
             if not konfiguracia_nastroja:
                 raise Exception(f'Nástroj "{nazov_nastroja}" nebol pridaný')
             # Zavolanie asynchrónneho spracovateľa nástroja
             vysledok = await konfiguracia_nastroja["handler"](**json_argumenty)
+
+            # Logovanie úspešného výsledku nástroja
+            log_data_success = {
+                 "call_id": id_volania,
+                 "tool_name": nazov_nastroja,
+                 "result": vysledok # Ukladáme celý výsledok (môže obsahovať 'message' a 'image_path')
+            }
+            # Ak nástroj vrátil SQL (predpoklad pre databaza.py)
+            if isinstance(vysledok, dict) and "sql_query" in vysledok:
+                 log_data_success["sql_query"] = vysledok["sql_query"]
+                 log_data_success["sql_explanation"] = vysledok.get("explanation", "")
+            # Ak nástroj vrátil cestu k obrázku (predpoklad pre graf.py)
+            if isinstance(vysledok, dict) and "image_path" in vysledok:
+                 log_data_success["image_path"] = vysledok["image_path"]
+
+            self._log_event("tool_call_ended", log_data_success)
+
             # Odoslanie výsledku späť ako výstup funkcie
             await self.realtime_api.posli(
                 "conversation.item.create",
@@ -147,12 +225,19 @@ class KlientRealnehoCasu(SpracovatelUdalostiRealnehoCasu):
                     "item": {
                         "type": "function_call_output",
                         "call_id": id_volania,
-                        "output": json.dumps(vysledok),
+                        "output": json.dumps(vysledok), # Odosielame pôvodný výsledok
                     }
                 },
             )
         except Exception as e:
-            zapisovac.error(f"Chyba pri volaní nástroja: {str(e)}")
+            error_message = str(e)
+            zapisovac.error(f"Chyba pri volaní nástroja: {error_message}")
+            # Logovanie chyby nástroja
+            self._log_event("tool_call_ended", {
+                "call_id": id_volania,
+                "tool_name": nazov_nastroja,
+                "error": error_message
+            })
             # Odoslanie chyby späť ako výstup funkcie
             await self.realtime_api.posli(
                 "conversation.item.create",
@@ -160,7 +245,7 @@ class KlientRealnehoCasu(SpracovatelUdalostiRealnehoCasu):
                     "item": {
                         "type": "function_call_output",
                         "call_id": id_volania,
-                        "output": json.dumps({"error": str(e)}),
+                        "output": json.dumps({"error": error_message}),
                     }
                 },
             )
@@ -259,13 +344,20 @@ class KlientRealnehoCasu(SpracovatelUdalostiRealnehoCasu):
     async def posli_obsah_spravy_pouzivatela(self, obsah=[]):
         """Odošle obsah správy od používateľa (text, audio) a vyžiada odpoveď."""
         if obsah:
+            # Logovanie odoslanej správy používateľa
+            self._log_event("user_message_sent", {"content": obsah})
+
             # Konverzia audio dát na base64 pred odoslaním
+            processed_content = []
             for cast in obsah:
-                if cast["type"] == "input_audio":
-                    if isinstance(cast["audio"], (bytes, bytearray)):
-                        cast["audio"] = buffer_pola_na_base64(np.frombuffer(cast["audio"], dtype=np.int16))
-                    elif isinstance(cast["audio"], np.ndarray):
-                         cast["audio"] = buffer_pola_na_base64(cast["audio"])
+                 processed_cast = cast.copy() # Vytvoríme kópiu, aby sme neupravovali pôvodný obsah pre logovanie
+                 if processed_cast["type"] == "input_audio":
+                     if isinstance(processed_cast["audio"], (bytes, bytearray)):
+                         processed_cast["audio"] = buffer_pola_na_base64(np.frombuffer(processed_cast["audio"], dtype=np.int16))
+                     elif isinstance(processed_cast["audio"], np.ndarray):
+                          processed_cast["audio"] = buffer_pola_na_base64(processed_cast["audio"])
+                 processed_content.append(processed_cast)
+
 
             await self.realtime_api.posli(
                 "conversation.item.create",
@@ -273,7 +365,7 @@ class KlientRealnehoCasu(SpracovatelUdalostiRealnehoCasu):
                     "item": {
                         "type": "message",
                         "role": "user",
-                        "content": obsah,
+                        "content": processed_content, # Odosielame spracovaný obsah
                     }
                 },
             )

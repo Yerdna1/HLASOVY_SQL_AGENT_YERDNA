@@ -11,12 +11,14 @@ import datetime
 import calendar
 import time
 import os # Pre budúce použitie s environmentálnymi premennými
+import json # Pre čítanie log súboru
 
 # Import pomocných funkcií
 from apka.rec import KlientRealnehoCasu
 from apka.helpers.realtime_setup import nastav_realtime_klienta
 # Import nástrojov - predpokladáme, že tento import zostáva alebo bude upravený
 from apka.custom_nastroje import nastroje
+
 
 # --- OpenAI Cost Fetching ---
 # TODO: PRESUŇTE TENTO KĽÚČ DO ENVIRONMENTÁLNEJ PREMENNEJ! NECOMMITUJTE HARDKÓDOVANÉ KĽÚČE.
@@ -127,6 +129,89 @@ async def start():
 
     # Nastavenie klienta pomocou importovanej funkcie a nástrojov
     await nastav_realtime_klienta(nastroje)
+
+    # Pridanie tlačidla pre históriu
+    actions = [
+        cl.Action(name="show_history", value="show", label="Zobraziť históriu")
+    ]
+    await cl.Message(content="Môžete zobraziť históriu konverzácie.", actions=actions).send()
+
+
+LOG_FILE_PATH = os.path.join("apka", "output", "conversation_log.jsonl")
+
+@cl.action_callback("show_history")
+async def on_show_history(action: cl.Action):
+    """Načíta a zobrazí históriu konverzácie z log súboru."""
+    logger.info(f"Kliknuté na akciu: {action.name} - Načítava sa história...")
+    history_content = "### História Konverzácie\n\n"
+    try:
+        if not os.path.exists(LOG_FILE_PATH):
+            history_content += "*História zatiaľ neexistuje.*"
+        else:
+            with open(LOG_FILE_PATH, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+                if not lines:
+                    history_content += "*História je prázdna.*"
+                else:
+                    for line in lines:
+                        try:
+                            log_entry = json.loads(line.strip())
+                            timestamp = log_entry.get("timestamp", "N/A")
+                            event_type = log_entry.get("event_type", "Neznámy typ")
+                            data = log_entry.get("data", {})
+                            history_content += f"**Čas:** {timestamp}\n"
+                            history_content += f"**Typ:** `{event_type}`\n"
+
+                            if event_type == "user_message_sent":
+                                content_list = data.get("content", [])
+                                text_content = next((item.get("text") for item in content_list if item.get("type") == "input_text"), None)
+                                if text_content:
+                                     history_content += f"**Používateľ:** {text_content}\n"
+                                else:
+                                     history_content += f"**Používateľ:** (Obsah bez textu)\n"
+                            elif event_type == "assistant_message_completed":
+                                content_list = data.get("content", [])
+                                text_content = next((item.get("text") for item in content_list if item.get("type") == "output_text"), None)
+                                if text_content:
+                                     history_content += f"**Asistent:** {text_content}\n"
+                                else:
+                                     history_content += f"**Asistent:** (Obsah bez textu)\n"
+                            elif event_type == "tool_call_started":
+                                history_content += f"**Volanie nástroja začalo:** `{data.get('tool_name')}` (ID: {data.get('call_id')})\n"
+                                history_content += f"**Argumenty:** ```json\n{data.get('arguments', '{}')}\n```\n"
+                            elif event_type == "tool_call_ended":
+                                history_content += f"**Volanie nástroja skončilo:** `{data.get('tool_name')}` (ID: {data.get('call_id')})\n"
+                                if "error" in data:
+                                    history_content += f"**Chyba:** {data.get('error')}\n"
+                                else:
+                                    result = data.get('result', {})
+                                    if "sql_query" in data:
+                                         history_content += f"**SQL Dotaz:** ```sql\n{data.get('sql_query')}\n```\n"
+                                         history_content += f"**Vysvetlenie:** {data.get('sql_explanation', '')}\n"
+                                    elif "image_path" in data:
+                                         history_content += f"**Správa:** {result.get('message', '')}\n"
+                                         history_content += f"**Uložený obrázok:** `{data.get('image_path')}`\n"
+                                    else:
+                                         # Všeobecný výsledok nástroja
+                                         history_content += f"**Výsledok:** ```json\n{json.dumps(result, indent=2, ensure_ascii=False)}\n```\n"
+                            else:
+                                # Pre ostatné typy udalostí zobrazíme surové dáta
+                                history_content += f"**Dáta:** ```json\n{json.dumps(data, indent=2, ensure_ascii=False)}\n```\n"
+
+                            history_content += "---\n" # Oddeľovač medzi záznamami
+                        except json.JSONDecodeError:
+                            history_content += f"*Chyba pri čítaní riadku:* `{line.strip()}`\n---\n"
+                        except Exception as parse_err:
+                             history_content += f"*Chyba pri spracovaní záznamu:* {parse_err}\n---\n"
+
+    except Exception as e:
+        logger.error(f"Chyba pri čítaní log súboru {LOG_FILE_PATH}: {e}")
+        history_content = f"Chyba pri načítaní histórie: {e}"
+
+    # Odoslanie histórie ako jednej správy (môže byť dlhá)
+    await cl.Message(content=history_content).send()
+    # Môžeme odstrániť tlačidlo po kliknutí, ak je to žiaduce
+    # await action.remove()
 
 
 @cl.on_message
