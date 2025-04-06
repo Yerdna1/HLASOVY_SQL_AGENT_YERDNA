@@ -9,3 +9,4 @@ together>=1.0
 tavily-python>=0.3
 requests>=2.31.0
 kaleido>=0.2.1 # Required for Plotly image export
+yfinance>=0.2.38 # Required for stock tool
