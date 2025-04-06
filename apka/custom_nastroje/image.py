@@ -11,8 +11,8 @@ from apka.widgets.LLM_modely import ziskaj_llm
 # Assuming logger is defined elsewhere or replacing with standard logging if needed
 # from utils.db_utils import logger # This might be incorrect if logger isn't there
 from apka.widgets.spolocne import zapisovac as logger, scratch_pad_adresar# Using the logger from spolocne like in other tools
-from apka.widgets.spolocne import ziskaj_konfiguraciu_generovania_obrazkov
 
+from apka.widgets.LLM_modely import ziskaj_konfiguraciu_generovania_obrazkov
 # Initialize Together AI client
 together_client = together.Together(api_key=os.getenv('TOGETHER_API_KEY'))
 
