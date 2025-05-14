@@ -1,26 +1,27 @@
 """
-Hlavný súbor aplikácie Chainlit pre real-time asistenta.
-Odvodené z https://github.com/Chainlit/cookbook/tree/main/realtime-assistant
+Hlavný súbor aplikácie Chainlit pre real-time asistenta s Ultravox.
 """
 
 import traceback
 import chainlit as cl
-from chainlit.input_widget import Select, TextInput # Import pre settings
+# Removed Select import as LLM provider is handled by Ultravox
+from chainlit.input_widget import TextInput
 from chainlit.logger import logger
 import requests
 import datetime
-import calendar
-import time
+# import calendar # Removed unused import
+# import time # Removed unused import
 import os
 import json
+import asyncio # Added for Ultravox async operations
 from dotenv import load_dotenv # Na explicitné načítanie .env
+
+# Import Ultravox client
+import ultravox_client as uv
 
 # Načítanie environmentálnych premenných
 load_dotenv()
 
-# Import pomocných funkcií
-from apka.rec import KlientRealnehoCasu
-from apka.helpers.realtime_setup import nastav_realtime_klienta
 # Import nástrojov - predpokladáme, že tento import zostáva alebo bude upravený
 from apka.custom_nastroje import nastroje
 
@@ -31,316 +32,373 @@ def mask_api_key(api_key: str | None) -> str:
         return "Nenastavený alebo príliš krátky"
     return f"{api_key[:4]}...{api_key[-4:]}"
 
-# --- OpenAI Cost Fetching ---
-# TODO: Presunúť OPENAI_ADMIN_API_KEY do .env, ak tam ešte nie je
-OPENAI_ADMIN_API_KEY_VALUE = os.getenv("OPENAI_ADMIN_API_KEY") # Premenovaná pre jasnosť
+# --- Removed OpenAI Cost Fetching ---
 
-def get_openai_monthly_cost(): # Odstránený argument api_key
-    """Získa náklady na OpenAI API od začiatku aktuálneho mesiaca."""
-    # Použijeme hodnotu načítanú z .env
-    if not OPENAI_ADMIN_API_KEY_VALUE or OPENAI_ADMIN_API_KEY_VALUE == "YOUR_OPENAI_ADMIN_API_KEY_HERE": # Pridaná kontrola pre placeholder
-        logger.warning("OPENAI_ADMIN_API_KEY nebol nájdený v .env alebo je placeholder. Náklady nebudú zobrazené.")
-        return "Chyba: OpenAI Admin API kľúč nie je nakonfigurovaný v .env."
+# Placeholder for Ultravox API Key and Endpoint - replace with actual values from .env
+ULTRAVOX_API_KEY = os.getenv("ULTRAVOX_API_KEY", "YOUR_ULTRAVOX_API_KEY_HERE") # Replace placeholder if needed
+ULTRAVOX_API_ENDPOINT = os.getenv("ULTRAVOX_API_ENDPOINT", "https://api.ultravox.ai/api/calls") # Default endpoint
 
-    now = datetime.datetime.now(datetime.timezone.utc)
-    start_of_month_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    start_time_unix = int(start_of_month_dt.timestamp())
+# --- Helper function for REST API call ---
+def create_ultravox_call_session(api_key: str, endpoint_url: str, tools_config: list) -> str | None:
+    """Makes a REST API call to Ultravox to create a call session and returns the joinUrl."""
+    if not api_key or api_key == "YOUR_ULTRAVOX_API_KEY_HERE":
+        logger.error("❌ Ultravox API Key not configured in .env.")
+        return None
 
     headers = {
-        "Authorization": f"Bearer {OPENAI_ADMIN_API_KEY_VALUE}",
+        "X-API-Key": api_key,
         "Content-Type": "application/json",
     }
-    params = {
-        "start_time": start_time_unix,
+    # Prepare tool definitions for the API call
+    # Assuming 'nastroje' contains tuples like ({'name': 'tool_name', ...}, handler)
+    # We need to format them according to Ultravox API specs
+    selected_tools = []
+    for tool_def, _ in tools_config:
+        tool_name = tool_def.get("name")
+        if tool_name:
+            # Mark as client-side tool for SDK handling
+            # Rename 'name' to 'modelToolName' and move 'parameters' under 'dynamicParameters'
+            api_tool_def = tool_def.copy()
+            if "name" in api_tool_def:
+                api_tool_def["modelToolName"] = api_tool_def.pop("name")
+            if "parameters" in api_tool_def:
+                original_params = api_tool_def.pop("parameters")
+                dynamic_params_list = []
+                properties = original_params.get("properties", {})
+                required_list = original_params.get("required", [])
+
+                for param_name, param_schema in properties.items():
+                    dynamic_params_list.append({
+                        "name": param_name,
+                        "location": 4, # For client-side tools
+                        "schema": param_schema, # Schema for the individual parameter
+                        "required": param_name in required_list
+                    })
+
+                if dynamic_params_list:
+                    api_tool_def["dynamicParameters"] = dynamic_params_list
+
+            api_tool_def["client"] = {}
+
+            # Structure according to API error message: list of objects with EITHER toolName OR temporaryTool
+            # Since we define inline, use only temporaryTool
+            selected_tools.append({
+                "temporaryTool": api_tool_def
+            })
+        else:
+            logger.warning(f"Skipping tool due to missing 'name': {tool_def}")
+
+    payload = {
+        "model": "fixie-ai/ultravox-70B", # Or configure as needed
+        # "voice": "...", # Removed voice setting to use default
+        "selectedTools": selected_tools,
+        # Add other necessary parameters like systemPrompt, etc.
+        "systemPrompt": "You are a helpful voice assistant.",
     }
-    url = "https://api.openai.com/v1/organization/costs"
-    response = None
+    logger.info(f"Creating Ultravox call with payload: {json.dumps(payload, indent=2)}")
 
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=10) # Pridaný timeout
+        response = requests.post(endpoint_url, headers=headers, json=payload, timeout=15)
         response.raise_for_status()
         data = response.json()
-
-        total_cost = 0.0
-        currency = "USD"
-
-        if data.get("data"):
-            for bucket in data["data"]:
-                if bucket.get("results"):
-                    for result in bucket["results"]:
-                        if result.get("amount"):
-                            total_cost += result["amount"].get("value", 0.0)
-                            currency = result["amount"].get("currency", currency).upper()
-
-            # Vráti formátovaný reťazec s nákladmi
-            return f"Náklady na OpenAI tento mesiac: ${total_cost:.2f} {currency}"
-        else:
-            if data.get("error"):
-                 error_msg = data["error"].get("message", "Neznáma chyba API.")
-                 logger.error(f"Chyba API pri získavaní nákladov OpenAI: {error_msg}")
-                 if "Incorrect API key" in error_msg or "authentication" in error_msg.lower() or "insufficient permissions" in error_msg.lower():
-                     # Vráti chybovú správu špecifickú pre API kľúč
-                     return "Chyba: Neplatný alebo neautorizovaný OpenAI Admin API kľúč."
-                 # Vráti všeobecnú chybovú správu API
-                 return f"Chyba API pri získavaní nákladov: {error_msg}"
-            # Vráti správu, ak neboli nájdené žiadne dáta
-            return "Nepodarilo sa získať údaje o nákladoch (žiadne dáta)."
-
-    except requests.exceptions.HTTPError as http_err:
-        logger.error(f"HTTP chyba pri volaní OpenAI Costs API: {http_err}")
-        if response is not None:
-            status_code = response.status_code
-            try:
-                error_details = response.json().get("error", {})
-                error_message = error_details.get("message", str(http_err))
-                error_type = error_details.get("type")
-                logger.error(f"Stavový kód: {status_code}, Typ chyby: {error_type}, Správa: {error_message}")
-                if status_code == 401 or status_code == 403:
-                    # Vráti chybovú správu špecifickú pre API kľúč
-                    return "Chyba: Neplatný alebo neautorizovaný OpenAI Admin API kľúč."
-                elif status_code == 429:
-                    return "Chyba: Prekročený limit požiadaviek na OpenAI API."
-                else:
-                    # Vráti všeobecnú chybovú správu API
-                    return f"Chyba API ({status_code}): {error_message}"
-            except Exception as json_err:
-                 logger.error(f"Nepodarilo sa parsovať JSON z chybovej odpovede: {json_err}")
-                 # Vráti všeobecnú HTTP chybovú správu
-                 return f"HTTP chyba pri získavaní nákladov: {http_err}"
-        else:
-             # Vráti všeobecnú HTTP chybovú správu, ak odpoveď neexistuje
-            return f"HTTP chyba pri získavaní nákladov: {http_err}"
-    except requests.exceptions.Timeout:
-        logger.error("Timeout pri volaní OpenAI Costs API.")
-        # Vráti správu o timeoute
-        return "Chyba: Vypršal časový limit pri získavaní nákladov."
-    except requests.exceptions.RequestException as req_err:
-        logger.error(f"Chyba pripojenia pri volaní OpenAI Costs API: {req_err}")
-        # Vráti správu o chybe pripojenia
-        return f"Chyba pripojenia pri získavaní nákladov: {req_err}"
+        join_url = data.get("joinUrl")
+        if not join_url:
+            logger.error(f"❌ Failed to get joinUrl from Ultravox API response: {data}")
+            return None
+        logger.info(f"✅ Successfully created Ultravox call session. Join URL obtained.")
+        return join_url
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Error creating Ultravox call session: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+             logger.error(f"Response status: {e.response.status_code}")
+             try:
+                 logger.error(f"Response body: {e.response.text}")
+             except Exception:
+                 pass # Ignore if response body cannot be read
+        return None
     except Exception as e:
-        logger.error(f"Neočekávaná chyba pri získavaní OpenAI nákladov: {traceback.format_exc()}")
-        # Vráti všeobecnú neočakávanú chybovú správu
-        return f"Neočekávaná chyba: {e}"
+        logger.error(f"❌ Unexpected error during Ultravox API call: {traceback.format_exc()}")
+        return None
 
-# --- Koniec OpenAI Cost Fetching ---
+# --- End Helper function ---
 
 
-# --- Koniec OpenAI Cost Fetching ---
+# --- End Helper function ---
 
+
+# Store join_url in session for connect button
+def store_join_url(join_url: str | None):
+    if join_url:
+        cl.user_session.set("ultravox_join_url", join_url)
+    else:
+        cl.user_session.set("ultravox_join_url", None)
 
 @cl.on_chat_start
 async def start():
-    """Inicializuje chat, nastaví klienta a zobrazí nastavenia."""
-
-    # Načítanie hodnôt z .env pre zobrazenie v nastaveniach
+    """Initializes chat, prepares Ultravox session, and displays settings/buttons."""
+    # Load necessary env vars
     db_path = os.getenv("DB_DATABASE", "Nenájdené v .env")
-    openai_admin_key = os.getenv("OPENAI_ADMIN_API_KEY")
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    openai_key = os.getenv("OPENAI_API_KEY")
-    together_key = os.getenv("TOGETHER_API_KEY")
-    tavily_key = os.getenv("TAVILY_API_KEY")
-    groq_key = os.getenv("GROQ_API_KEY")
-    # Predvolený LLM provider (môže byť prepísaný nastaveniami)
-    default_llm_provider = os.getenv("AGENT_MODE", "Groq").upper() # Predvolená hodnota Groq, ak AGENT_MODE nie je nastavený
+    # Removed OpenAI/Gemini/etc key loading for simplicity, add back if needed
+    groq_key = os.getenv("GROQ_API_KEY") # Keep if tools still use it internally
+    ultravox_key = os.getenv("ULTRAVOX_API_KEY")
 
-    # Definovanie Chat Settings
+    # Define Chat Settings (Simplified)
     settings = await cl.ChatSettings(
         [
-            Select(
-                id="LLMProvider",
-                label="Poskytovateľ LLM",
-                values=["Gemini", "OpenAI", "Groq"], # Pridajte ďalšie podľa potreby
-                initial_index=["Gemini", "OpenAI", "Groq"].index(default_llm_provider) if default_llm_provider in ["Gemini", "OpenAI", "Groq"] else 2 # Index pre Groq ako fallback
-            ),
+            # Removed LLMProvider selection as Ultravox manages the model
             TextInput(id="DBPath", label="Cesta k databáze", initial=db_path, disabled=True),
-            TextInput(id="OpenAIAdminKey", label="OpenAI Admin Key", initial=mask_api_key(openai_admin_key), disabled=True),
-            TextInput(id="GeminiKey", label="Gemini Key", initial=mask_api_key(gemini_key), disabled=True),
-            TextInput(id="OpenAIKey", label="OpenAI Key", initial=mask_api_key(openai_key), disabled=True),
-            TextInput(id="TogetherKey", label="Together Key", initial=mask_api_key(together_key), disabled=True),
-            TextInput(id="TavilyKey", label="Tavily Key", initial=mask_api_key(tavily_key), disabled=True),
-            TextInput(id="GroqKey", label="Groq Key", initial=mask_api_key(groq_key), disabled=True),
+            TextInput(id="GroqKey", label="Groq Key (for tools)", initial=mask_api_key(groq_key), disabled=True),
+            TextInput(id="UltravoxKey", label="Ultravox Key", initial=mask_api_key(ultravox_key), disabled=True),
         ]
     ).send()
 
-    # Uloženie počiatočného výberu LLM do session
-    selected_llm = settings.get("LLMProvider")
-    cl.user_session.set("selected_llm_provider", selected_llm)
-    logger.info(f"Počiatočný LLM poskytovateľ nastavený na: {selected_llm}")
-
-    # Zobrazenie úvodnej správy
-    await cl.Message(content="Ahoj! Som tu. Stlač `P` pre rozprávanie!").send()
-
-    # Získanie a zobrazenie nákladov OpenAI (ak je kľúč platný)
-    cost_message_content = get_openai_monthly_cost() # Už nepotrebuje argument
-    await cl.Message(content=cost_message_content, author="Systémové Info").send()
-
-    # Nastavenie klienta pomocou importovanej funkcie a nástrojov
-    # TODO: Upraviť nastav_realtime_klienta, aby akceptovala a použila selected_llm
-    await nastav_realtime_klienta(nastroje) # Zatiaľ voláme bez LLM providera
-
-    # Pridanie tlačidla pre históriu
-    actions = [
-        cl.Action(name="show_history", value="show", label="Zobraziť históriu")
-    ]
-    await cl.Message(content="Môžete zobraziť históriu konverzácie.", actions=actions).send()
-
-
-LOG_FILE_PATH = os.path.join("apka", "output", "conversation_log.jsonl")
-
-@cl.on_settings_update
-async def on_settings_update(settings):
-    """Spracuje aktualizáciu nastavení."""
-    selected_llm = settings.get("LLMProvider")
-    if selected_llm:
-        cl.user_session.set("selected_llm_provider", selected_llm)
-        logger.info(f"LLM poskytovateľ aktualizovaný na: {selected_llm}")
-        await cl.Message(content=f"Poskytovateľ LLM bol zmenený na **{selected_llm}**. Zmena sa prejaví pri ďalšej interakcii.").send()
-        # TODO: Potenciálne reinicializovať klienta alebo len zmeniť model pri ďalšom volaní
-        # klient: KlientRealnehoCasu = cl.user_session.get("klient_realneho_casu")
-        # if klient:
-        #     await klient.aktualizuj_konfiguraciu_llm(selected_llm) # Hypotetická funkcia
-
-
-@cl.action_callback("show_history")
-async def on_show_history(action: cl.Action):
-    """Načíta a zobrazí históriu konverzácie z log súboru."""
-    logger.info(f"Kliknuté na akciu: {action.name} - Načítava sa história...")
-    history_content = "### História Konverzácie\n\n"
+    # --- Initialize Ultravox Session (without connecting) ---
     try:
-        if not os.path.exists(LOG_FILE_PATH):
-            history_content += "*História zatiaľ neexistuje.*"
-        else:
-            with open(LOG_FILE_PATH, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-                if not lines:
-                    history_content += "*História je prázdna.*"
-                else:
-                    for line in lines:
-                        try:
-                            log_entry = json.loads(line.strip())
-                            timestamp = log_entry.get("timestamp", "N/A")
-                            event_type = log_entry.get("event_type", "Neznámy typ")
-                            data = log_entry.get("data", {})
-                            history_content += f"**Čas:** {timestamp}\n"
-                            history_content += f"**Typ:** `{event_type}`\n"
+        session = uv.UltravoxSession()
+        cl.user_session.set("ultravox_session", session)
+        logger.info("UltravoxSession initialized (but not connected).")
 
-                            if event_type == "user_message_sent":
-                                content_list = data.get("content", [])
-                                text_content = next((item.get("text") for item in content_list if item.get("type") == "input_text"), None)
-                                if text_content:
-                                     history_content += f"**Používateľ:** {text_content}\n"
-                                else:
-                                     history_content += f"**Používateľ:** (Obsah bez textu)\n"
-                            elif event_type == "assistant_message_completed":
-                                content_list = data.get("content", [])
-                                text_content = next((item.get("text") for item in content_list if item.get("type") == "output_text"), None)
-                                if text_content:
-                                     history_content += f"**Asistent:** {text_content}\n"
-                                else:
-                                     history_content += f"**Asistent:** (Obsah bez textu)\n"
-                            elif event_type == "tool_call_started":
-                                history_content += f"**Volanie nástroja začalo:** `{data.get('tool_name')}` (ID: {data.get('call_id')})\n"
-                                history_content += f"**Argumenty:** ```json\n{data.get('arguments', '{}')}\n```\n"
-                            elif event_type == "tool_call_ended":
-                                history_content += f"**Volanie nástroja skončilo:** `{data.get('tool_name')}` (ID: {data.get('call_id')})\n"
-                                if "error" in data:
-                                    history_content += f"**Chyba:** {data.get('error')}\n"
-                                else:
-                                    result = data.get('result', {})
-                                    if "sql_query" in data:
-                                         history_content += f"**SQL Dotaz:** ```sql\n{data.get('sql_query')}\n```\n"
-                                         history_content += f"**Vysvetlenie:** {data.get('sql_explanation', '')}\n"
-                                    elif "image_path" in data:
-                                         history_content += f"**Správa:** {result.get('message', '')}\n"
-                                         history_content += f"**Uložený obrázok:** `{data.get('image_path')}`\n"
-                                    else:
-                                         # Všeobecný výsledok nástroja
-                                         history_content += f"**Výsledok:** ```json\n{json.dumps(result, indent=2, ensure_ascii=False)}\n```\n"
-                            else:
-                                # Pre ostatné typy udalostí zobrazíme surové dáta
-                                history_content += f"**Dáta:** ```json\n{json.dumps(data, indent=2, ensure_ascii=False)}\n```\n"
+        # Register Event Handlers
+        @session.on("status")
+        def on_status():
+            status = session.status
+            logger.info(f"Ultravox Status: {status}")
+            # Optional: Update UI based on status
+            if status == uv.UltravoxSessionStatus.DISCONNECTED:
+                 # Handle disconnection if needed
+                 # Ensure cleanup happens, potentially trigger done event if using one
+                 logger.warning("Ultravox session disconnected.")
+                 # done_event = cl.user_session.get("ultravox_done_event") # If using an event for waiting
+                 # if done_event: done_event.set()
+                 # Update button states if necessary
+                 asyncio.create_task(update_connect_buttons(connected=False))
+                 pass
 
-                            history_content += "---\n" # Oddeľovač medzi záznamami
-                        except json.JSONDecodeError:
-                            history_content += f"*Chyba pri čítaní riadku:* `{line.strip()}`\n---\n"
-                        except Exception as parse_err:
-                             history_content += f"*Chyba pri spracovaní záznamu:* {parse_err}\n---\n"
+        @session.on("transcripts")
+        def on_transcript():
+            # Process transcripts if needed (e.g., display in UI)
+            # Note: This provides text, not audio chunks for playback
+            if session.transcripts:
+                 last_transcript = session.transcripts[-1]
+                 # Example: Send transcript to Chainlit UI
+                 # Need to manage message updates carefully if streaming transcripts
+                 # asyncio.create_task(cl.Message(content=f"{last_transcript.speaker}: {last_transcript.text} ({'Final' if last_transcript.final else 'Partial'})").send())
+                 logger.info(f"Transcript ({'Final' if last_transcript.final else 'Partial'}): {last_transcript.speaker} - {last_transcript.text}")
+
+
+        @session.on("error")
+        def on_error(error):
+            logger.error(f"Ultravox Session Error: {error}", exc_info=error)
+            asyncio.create_task(cl.ErrorMessage(content=f"Ultravox Error: {error}").send())
+            # Consider cleanup or session reset here
+            # done_event = cl.user_session.get("ultravox_done_event")
+            # if done_event: done_event.set()
+
+
+        # 4. Register Tool Implementations
+        tool_implementations = {}
+        for tool_def, handler in nastroje:
+             tool_name = tool_def.get("name")
+             if tool_name and callable(handler):
+                 # Make handler async if it's not already, as SDK might expect awaitable
+                 if not asyncio.iscoroutinefunction(handler):
+                     # Simple wrapper to make sync function awaitable
+                     async def async_handler_wrapper(sync_handler=handler, **kwargs):
+                         # Consider running sync handler in executor if it's blocking
+                         # loop = asyncio.get_running_loop()
+                         # return await loop.run_in_executor(None, sync_handler, **kwargs)
+                         return sync_handler(**kwargs)
+                     tool_implementations[tool_name] = async_handler_wrapper
+                 else:
+                     tool_implementations[tool_name] = handler
+             # Use modelToolName for registration key if available, otherwise original name
+             sdk_tool_name = tool_def.get("modelToolName", tool_def.get("name"))
+             if sdk_tool_name and callable(handler):
+                 # Make handler async if it's not already, as SDK might expect awaitable
+                 if not asyncio.iscoroutinefunction(handler):
+                     # Simple wrapper to make sync function awaitable
+                     async def async_handler_wrapper(sync_handler=handler, **kwargs):
+                         # Consider running sync handler in executor if it's blocking
+                         # loop = asyncio.get_running_loop()
+                         # return await loop.run_in_executor(None, sync_handler, **kwargs)
+                         return sync_handler(**kwargs)
+                     tool_implementations[sdk_tool_name] = async_handler_wrapper
+                 else:
+                     tool_implementations[sdk_tool_name] = handler
+             else:
+                 logger.warning(f"Skipping invalid tool registration: {tool_def.get('name', 'N/A')}")
+
+        if tool_implementations:
+             session.register_tool_implementations(tool_implementations)
+             logger.info(f"Registered tools: {list(tool_implementations.keys())}")
+
+        # Do NOT join call automatically here
+        logger.info("Ultravox setup complete. Ready to connect.")
+        await update_connect_buttons(connected=False) # Show initial buttons
 
     except Exception as e:
-        logger.error(f"Chyba pri čítaní log súboru {LOG_FILE_PATH}: {e}")
-        history_content = f"Chyba pri načítaní histórie: {e}"
+        logger.error(f"❌ Failed to initialize Ultravox session: {traceback.format_exc()}")
+        await cl.ErrorMessage(content=f"Error setting up Ultravox: {e}").send()
+        cl.user_session.set("ultravox_session", None) # Ensure session is None if setup failed
 
-    # Odoslanie histórie ako jednej správy (môže byť dlhá)
-    await cl.Message(content=history_content).send()
-    # Môžeme odstrániť tlačidlo po kliknutí, ak je to žiaduce
-    # await action.remove()
+    # --- End Ultravox Setup ---
+
+
+# --- Connection Control Actions ---
+
+async def update_connect_buttons(connected: bool):
+    """Sends or updates the connection control buttons."""
+    actions = [
+        cl.Action(name="connect_ultravox", value="connect", label="📞 Connect", disabled=connected),
+        cl.Action(name="disconnect_ultravox", value="disconnect", label="🔌 Disconnect", disabled=not connected),
+        cl.Action(name="disconnect_ultravox", value="disconnect_x", label="❌ Stop", disabled=not connected) # Added Stop button
+    ]
+    status_msg = "Ultravox Connected" if connected else "Ultravox Disconnected"
+    # Try to get existing message to update, otherwise send new
+    msg = cl.user_session.get("connection_status_msg")
+    content = f"**Status:** {status_msg}"
+    if msg:
+        msg.content = content
+        msg.actions = actions
+        await msg.update()
+    else:
+        msg = cl.Message(content=content, actions=actions)
+        await msg.send()
+        cl.user_session.set("connection_status_msg", msg)
+
+
+@cl.action_callback("connect_ultravox")
+async def on_connect_ultravox(action: cl.Action):
+    """Handles the Connect button click."""
+    await action.remove() # Remove button temporarily to prevent double clicks
+    session: uv.UltravoxSession = cl.user_session.get("ultravox_session")
+
+    if not session:
+        await cl.ErrorMessage(content="Ultravox session not initialized properly.").send()
+        await update_connect_buttons(connected=False) # Show buttons again
+        return
+
+    if session.status.is_live():
+        await cl.Message(content="Already connected to Ultravox.").send()
+        await update_connect_buttons(connected=True) # Ensure buttons reflect state
+        return
+
+    await cl.Message(content="Connecting to Ultravox...").send()
+
+    # 1. Create Call Session via REST API
+    join_url = create_ultravox_call_session(ULTRAVOX_API_KEY, ULTRAVOX_API_ENDPOINT, nastroje)
+
+    if not join_url:
+        await cl.ErrorMessage(content="Failed to create Ultravox call session. Please check API key and logs.").send()
+        await update_connect_buttons(connected=False) # Show buttons again
+        return
+
+    # 2. Join the Call
+    try:
+        await session.join_call(join_url)
+        logger.info("Attempted to join Ultravox call.")
+        await cl.Message(content="✅ Ultravox Connected. Voice interaction might use system defaults.").send()
+        await update_connect_buttons(connected=True)
+    except Exception as e:
+        logger.error(f"❌ Failed to join Ultravox call: {traceback.format_exc()}")
+        await cl.ErrorMessage(content=f"Error joining Ultravox call: {e}").send()
+        await update_connect_buttons(connected=False) # Show buttons again
+
+
+@cl.action_callback("disconnect_ultravox")
+async def on_disconnect_ultravox(action: cl.Action):
+    """Handles the Disconnect button click."""
+    await action.remove() # Remove button temporarily
+    session: uv.UltravoxSession = cl.user_session.get("ultravox_session")
+
+    if not session:
+        await cl.ErrorMessage(content="Ultravox session not initialized.").send()
+        await update_connect_buttons(connected=False) # Show buttons again
+        return
+
+    if not session.status.is_live():
+        await cl.Message(content="Already disconnected from Ultravox.").send()
+        await update_connect_buttons(connected=False) # Ensure buttons reflect state
+        return
+
+    await cl.Message(content="Disconnecting from Ultravox...").send()
+    try:
+        await session.leave_call()
+        logger.info("Left Ultravox call via button.")
+        await cl.Message(content="🔌 Ultravox Disconnected.").send()
+        # Session status handler should update buttons, but we can force it
+        await update_connect_buttons(connected=False)
+    except Exception as e:
+        logger.error(f"Error leaving Ultravox call via button: {e}")
+        await cl.ErrorMessage(content=f"Error disconnecting: {e}").send()
+        # Try to update buttons even on error
+        await update_connect_buttons(connected=session.status.is_live())
+
+# --- End Connection Control Actions ---
+
 
 
 @cl.on_message
 async def on_message(sprava: cl.Message):
     """Spracuje textovú správu od používateľa."""
-    # Získanie klienta zo session
-    klient_realneho_casu: KlientRealnehoCasu = cl.user_session.get("klient_realneho_casu")
-
-    if klient_realneho_casu and klient_realneho_casu.je_pripojeny():
-        # TODO: Skúsiť spracovanie obrázkov s message.elements
-        # Odoslanie textového obsahu správy
-        await klient_realneho_casu.posli_obsah_spravy_pouzivatela(
-            [{"type": "input_text", "text": sprava.content}]
-        )
+    session: uv.UltravoxSession = cl.user_session.get("ultravox_session")
+    if session and session.status.is_live():
+        try:
+            logger.info(f"Sending text to Ultravox: {sprava.content}")
+            await session.send_text(sprava.content)
+        except Exception as e:
+            logger.error(f"Error sending text to Ultravox: {e}")
+            await cl.ErrorMessage(content=f"Error sending message: {e}").send()
     else:
-        await cl.Message(
-            content="Prosím, aktivujte hlasový režim pred odoslaním správ!"
-        ).send()
+        logger.warning(f"Ultravox session not active (Status: {session.status if session else 'None'}). Cannot send text message.")
+        await cl.Message(content="Ultravox session not active. Please connect first.").send()
 
 
 @cl.on_audio_start
 async def on_audio_start():
-    """Spracuje začiatok nahrávania audia."""
-    try:
-        klient_realneho_casu: KlientRealnehoCasu = cl.user_session.get("klient_realneho_casu")
-        if not klient_realneho_casu:
-             logger.error("Real-time klient nebol inicializovaný v session.")
-             await cl.ErrorMessage(content="Chyba: Real-time klient nie je dostupný.").send()
-             return False
-
-        # Pripojenie klienta, ak ešte nie je pripojený
-        if not klient_realneho_casu.je_pripojeny():
-            await klient_realneho_casu.pripoj()
-            logger.info("Pripojené k real-time API")
-        else:
-             logger.info("Real-time klient je už pripojený.")
-
-        # TODO: Možno bude potrebné znovu vytvoriť položky na obnovenie kontextu
-        # klient_realneho_casu.vytvor_polozku_konverzacie(polozka)
-        return True
-    except Exception as e:
-        logger.error(f"Chyba pri pripájaní k real-time API: {traceback.format_exc()}")
-        await cl.ErrorMessage(
-            content=f"Nepodarilo sa pripojiť k real-time API: {e}"
-        ).send()
-        return False
+    """Handles audio start - Ultravox SDK manages connection after join_call."""
+    logger.info("Audio recording started by Chainlit.")
+    session: uv.UltravoxSession = cl.user_session.get("ultravox_session")
+    if not session or not session.status.is_live():
+        logger.warning("Ultravox session not active during audio start.")
+        await cl.Message(content="Cannot start audio: Ultravox session not connected.").send()
+        return False # Indicate Chainlit should not proceed
+    # Mic is likely managed by the SDK internally
+    logger.info("Ultravox SDK should be handling microphone input.")
+    return True
 
 
 @cl.on_audio_chunk
 async def on_audio_chunk(chunk: cl.InputAudioChunk):
-    """Spracuje prichádzajúci audio chunk."""
-    klient_realneho_casu: KlientRealnehoCasu = cl.user_session.get("klient_realneho_casu")
-    if klient_realneho_casu and klient_realneho_casu.je_pripojeny():
-        # Pridanie audio dát do bufferu klienta
-        await klient_realneho_casu.pridaj_vstupne_audio(chunk.data)
-    else:
-        # Logovanie, ak klient nie je pripojený, ale neposielame správu používateľovi
-        logger.warning("Real-time klient nie je pripojený pri spracovaní audio chunku.")
+    """Handles incoming audio chunk."""
+    # !!! IMPORTANT LIMITATION !!!
+    # The Ultravox Python SDK (based on examples) does not seem to have a public API
+    # to accept raw audio chunks like this. It likely manages the microphone
+    # directly via the underlying WebRTC library after join_call is initiated.
+    # Therefore, this function cannot directly feed audio into the SDK.
+    # The audio Chainlit captures here might be ignored by Ultravox.
+    # logger.debug("Received audio chunk from Chainlit (likely ignored by Ultravox SDK).")
+    pass # Cannot send chunk to Ultravox SDK
 
 
 @cl.on_audio_end
 @cl.on_chat_end
 @cl.on_stop
 async def on_end():
-    """Spracuje ukončenie audia, chatu alebo zastavenie aplikácie."""
-    klient_realneho_casu: KlientRealnehoCasu = cl.user_session.get("klient_realneho_casu")
-    if klient_realneho_casu and klient_realneho_casu.je_pripojeny():
-        logger.info("Odpojuje sa real-time klient.")
-        await klient_realneho_casu.odpoj()
+    """Handles end events, leaves the Ultravox call if connected."""
+    logger.info("Received end event (audio/chat/stop).")
+    session: uv.UltravoxSession = cl.user_session.get("ultravox_session")
+    # Only try to leave if session exists and might be connected
+    if session and session.status != uv.UltravoxSessionStatus.DISCONNECTED:
+        logger.info("Leaving Ultravox call due to end event...")
+        try:
+            await session.leave_call()
+            logger.info("Left Ultravox call via end event.")
+        except Exception as e:
+            logger.error(f"Error leaving Ultravox call via end event: {e}")
+        # No finally block needed here as the status handler will clear the session if disconnect succeeds
+    elif session:
+         logger.info("Ultravox session already disconnected on end event.")
+         cl.user_session.set("ultravox_session", None) # Ensure cleanup if already disconnected
+    else:
+        logger.info("No active Ultravox session found on end event.")

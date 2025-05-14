@@ -1,8 +1,20 @@
+
 """Nástroj na dopytovanie databázy s konverziou prirodzeného jazyka na SQL."""
 
+"""Nástroj na dopytovanie databázy s konverziou prirodzeného jazyka na SQL."""
+
+"""Nástroj na dopytovanie databázy s konverziou prirodzeného jazyka na SQL."""
+
+"""Nástroj na dopytovanie databázy s konverziou prirodzeného jazyka na SQL."""
+
+"""Nástroj na dopytovanie databázy s konverziou prirodzeného jazyka na SQL."""
+
+import json # Add missing import
 import chainlit as cl
 from langchain.prompts import PromptTemplate
 from pydantic import BaseModel, Field
+from ultravox_client.session import ClientToolResult # Import ClientToolResult from specific module
+# Removed incorrect ClientToolResult import
 
 # Predpokladáme, že tieto budú dostupné po refaktorizácii/preklade príslušných modulov
 # Používame priamo db_konfiguracia namiesto aliasu db_config
@@ -29,8 +41,21 @@ definicia_vykonaj_sql = {
 }
 
 
-async def spracuj_sql_dotaz(otazka: str):
+# Modify function signature to accept a single dictionary argument
+async def spracuj_sql_dotaz(params: dict) -> str:
     """Prevedie prirodzený jazyk na SQL, vykoná dotaz a vráti výsledky."""
+    # Extract otazka from the params dictionary
+    otazka = params.get("otazka")
+    if not otazka or not isinstance(otazka, str):
+        error_msg = "Chyba: Chýbajúci alebo neplatný parameter 'otazka'."
+        zapisovac.error(f"❌ {error_msg}")
+        # Try sending error to Chainlit UI if possible
+        try:
+            await cl.Message(content=error_msg, type="error").send()
+        except Exception as cl_err:
+            zapisovac.error(f"Failed to send error message to Chainlit UI: {cl_err}")
+        return f"Error: {error_msg}" # Return error string
+
     try:
         zapisovac.info(f"🤔 Spracováva sa dotaz v prirodzenom jazyku: '{otazka}'")
 
@@ -42,7 +67,7 @@ async def spracuj_sql_dotaz(otazka: str):
              chyba = "Chyba: Konfigurácia databázy (db_konfiguracia) nie je správne inicializovaná alebo jej chýba atribút 'dialekt'."
              zapisovac.error(chyba)
              await cl.Message(content=chyba, type="error").send()
-             return {"error": chyba}
+             return ClientToolResult(result=f"Error: {chyba}") # Wrap in ClientToolResult
 
         dialekt = db_konfiguracia.dialekt.lower()
         pomoc_k_dialektu = dialect_info.get(dialekt, {"notes": "", "examples": ""}) if dialect_info else {"notes": "", "examples": ""}
@@ -99,8 +124,9 @@ async def spracuj_sql_dotaz(otazka: str):
         vysledok = db_connection.vykonaj_dotaz(sql_odpoved.dotaz)
 
         if "error" in vysledok:
-            await cl.Message(content=f"❌ Chyba pri vykonávaní dotazu: {vysledok['error']}", type="error").send()
-            return vysledok
+            error_msg = f"Chyba pri vykonávaní dotazu: {vysledok['error']}"
+            await cl.Message(content=f"❌ {error_msg}", type="error").send()
+            return ClientToolResult(result=f"Error: {error_msg}") # Wrap in ClientToolResult
 
         if "rows" in vysledok:
             # Formátovanie výsledkov SELECT dotazu
@@ -108,8 +134,9 @@ async def spracuj_sql_dotaz(otazka: str):
             riadky = vysledok["rows"]
 
             if not riadky:
-                await cl.Message(content="Dotaz bol úspešne vykonaný. Nenašli sa žiadne výsledky.").send()
-                return {"message": "Žiadne výsledky"}
+                msg = "Dotaz bol úspešne vykonaný. Nenašli sa žiadne výsledky."
+                await cl.Message(content=msg).send()
+                return ClientToolResult(result=msg) # Wrap in ClientToolResult
 
             # Vytvorenie markdown tabuľky pre lepšie formátovanie
             hlavicka = "| " + " | ".join(f"**{str(stlpec)}**" for stlpec in stlpce) + " |"
@@ -118,18 +145,27 @@ async def spracuj_sql_dotaz(otazka: str):
 
             tabulka = "\n".join([hlavicka, oddelovac] + riadky_formatovane)
             await cl.Message(content=f"**Výsledky Dotazu:**\n\n{tabulka}").send()
-            return {"rows": riadky}
+            # Return summary string including JSON data wrapped in ClientToolResult
+            try:
+                # Convert rows (list of dicts) to JSON string
+                data_json = json.dumps(riadky, ensure_ascii=False)
+                # Return ONLY the JSON data string, wrapped in ClientToolResult
+                return ClientToolResult(result=data_json)
+            except Exception as json_e:
+                zapisovac.error(f"Chyba pri konverzii výsledkov SQL na JSON: {json_e}")
+                # Return an error message if JSON conversion fails
+                return ClientToolResult(result=f"Dotaz úspešne vykonaný, ale nastala chyba pri formátovaní dát ({json_e}).")
         else:
             # Formátovanie výsledkov INSERT/UPDATE/DELETE
             sprava = f"✅ Dotaz bol úspešne vykonaný. Ovplyvnené riadky: {vysledok['affected_rows']}"
             await cl.Message(content=sprava).send()
-            return vysledok
+            return ClientToolResult(result=sprava) # Wrap in ClientToolResult
 
     except Exception as e:
         chybova_sprava = f"Chyba pri spracovaní dotazu: {str(e)}"
         zapisovac.error(f"❌ {chybova_sprava}")
         await cl.Message(content=chybova_sprava, type="error").send()
-        return {"error": chybova_sprava}
+        return ClientToolResult(result=f"Error: {chybova_sprava}") # Wrap in ClientToolResult
 
 
 vykonaj_sql = (definicia_vykonaj_sql, spracuj_sql_dotaz)

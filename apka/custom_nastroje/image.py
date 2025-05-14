@@ -1,11 +1,16 @@
 """Image generation tool."""
 
+"""Image generation tool."""
+
+"""Image generation tool."""
+
 import base64
 import os
 
 import chainlit as cl
 import together
 from langchain.prompts import PromptTemplate
+from ultravox_client.session import ClientToolResult # Ensure correct import
 from pydantic import BaseModel, Field
 from apka.widgets.LLM_modely import ziskaj_llm
 # Assuming logger is defined elsewhere or replacing with standard logging if needed
@@ -43,8 +48,17 @@ generate_image_def = {
 }
 
 
-async def generate_image_handler(prompt):
+# Modify function signature to accept a single dictionary argument
+async def generate_image_handler(params: dict) -> str:
     """Generates an image based on a given prompt using the Together API."""
+    # Extract prompt from the dictionary
+    prompt = params.get("prompt")
+    if not prompt or not isinstance(prompt, str):
+        error_msg = "Chyba: Chýbajúci alebo neplatný parameter 'prompt'."
+        logger.error(f"❌ {error_msg}")
+        await cl.Message(content=error_msg, type="error").send()
+        return ClientToolResult(result=f"Error: {error_msg}") # Wrap in ClientToolResult
+
     try:
         logger.info(f"✨ Enhancing prompt: '{prompt}'")
 
@@ -101,11 +115,19 @@ async def generate_image_handler(prompt):
             elements=[image],
         ).send()
 
-        return "Image successfully generated"
+        # Return success string wrapped in ClientToolResult
+        return ClientToolResult(result=f"Image successfully generated for prompt: '{enhanced_prompt}' and saved to {img_path}")
 
     except Exception as e:
-        logger.error(f"❌ Error generating image: {str(e)}")
-        return {"error": str(e)}
+        error_str = str(e)
+        logger.error(f"❌ Error generating image: {error_str}")
+        # Send error message to Chainlit UI if possible
+        try:
+            await cl.Message(content=f"An error occurred while generating the image: {error_str}", type="error").send()
+        except Exception as cl_err:
+            logger.error(f"Failed to send error message to Chainlit UI: {cl_err}")
+        # Return error string wrapped in ClientToolResult
+        return ClientToolResult(result=f"Error generating image: {error_str}") # Already wrapped
 
 
 generate_image = (generate_image_def, generate_image_handler)

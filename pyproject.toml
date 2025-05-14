@@ -6,13 +6,14 @@ readme = "README.md"
 requires-python = ">=3.12"
 
 dependencies = [
-    "chainlit==2.0.dev0",
+    "chainlit~=2.4.400", # Updated version constraint
+    "ultravox-client>=0.0.6", # Added for consistency
     "langchain-groq>=0.2.0",
     "langchain-openai>=0.2.2",
     "langchain>=0.3.3",
     "openai==1.51.2",
     "plotly>=5.24.1",
-    "websockets==12.0",  # Pinned websockets version
+    "websockets>=14.2",  # Updated websockets version
     "together>=1.0",
     "tavily-python>=0.3",
 ]

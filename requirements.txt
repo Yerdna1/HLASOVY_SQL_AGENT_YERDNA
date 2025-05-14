@@ -1,4 +1,5 @@
-chainlit==2.0.dev0
+chainlit # Removed version constraint
+ultravox-client # Removed version constraint
 langchain-groq>=0.2.0
 langchain-openai>=0.2.2
 langchain>=0.3.3
